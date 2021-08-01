@@ -1,6 +1,9 @@
 .vscode/
-lib/
-types/
+
+# We want to use these directly from repository.
+# lib/
+# types/
+
 Checkouts/
 
 # OSX
