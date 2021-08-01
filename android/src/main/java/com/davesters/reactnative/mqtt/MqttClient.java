@@ -17,6 +17,7 @@ import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.net.NetworkInterface;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
 import java.security.NoSuchProviderException;
@@ -26,11 +27,23 @@ import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.security.KeyStore;
 import javax.net.ssl.*;
 
+import android.content.Context;
+import android.util.Log;
+import android.net.Network;
+import android.net.NetworkInfo;
+import android.net.NetworkRequest;
+import android.net.NetworkCapabilities;
+import android.net.ConnectivityManager;
+
 class MqttClient {
+
+    private final String TAG = "HD";
 
     private static final String EVENT_NAME_CONNECT = "rn-native-mqtt_connect";
     private static final String EVENT_NAME_ERROR = "rn-native-mqtt_error";
@@ -43,18 +56,22 @@ class MqttClient {
     private final AtomicReference<IMqttAsyncClient> client;
     private final AtomicReference<Callback> connectCallback;
 
+    private String address;
+
     MqttClient(final ReactApplicationContext reactContext, final String id) {
+
         this.reactContext = reactContext;
         this.client = new AtomicReference<>();
         this.connectCallback = new AtomicReference<>();
         this.id = id;
     }
 
-    void connect(final String host, final ReadableMap options, Callback callback) {
+
+    void connectMqtt(final ReadableMap options, Callback callback) {
         connectCallback.set(callback);
 
         try {
-            this.client.set(new MqttAsyncClient(host, options.getString("clientId"), new MemoryPersistence()));
+            this.client.set(new MqttAsyncClient(address, options.getString("clientId"), new MemoryPersistence()));
 
             MqttConnectOptions connOpts = new MqttConnectOptions();
             connOpts.setCleanSession(!options.hasKey("cleanSession") || options.getBoolean("cleanSession"));
@@ -110,6 +127,56 @@ class MqttClient {
             callback.invoke(ex.getMessage());
             ex.printStackTrace();
         }
+    }
+
+    void connect(final String host, final ReadableMap options, final Callback callback) {
+        Log.d(TAG, "host: " + host);
+
+        ConnectivityManager connMgr = (ConnectivityManager) reactContext.getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkRequest.Builder request = new NetworkRequest.Builder();
+
+        Network btNetwork = null;
+        Network mobileNetwork = null;
+        for (Network network : connMgr.getAllNetworks()) {
+            NetworkInfo networkInfo = connMgr.getNetworkInfo(network);
+
+            Log.d(TAG, networkInfo.getTypeName());
+            Log.d(TAG, networkInfo.getState().name());
+
+            if (networkInfo.getType() == ConnectivityManager.TYPE_WIFI) {
+                mobileNetwork = network;
+            } else if (networkInfo.getType() == ConnectivityManager.TYPE_BLUETOOTH) {
+                btNetwork = network;
+            }
+        }
+
+        boolean isBluetooth = host.startsWith("bt://");
+        int transport = NetworkCapabilities.TRANSPORT_WIFI;
+
+        address = host;
+        if (isBluetooth) {
+            transport = NetworkCapabilities.TRANSPORT_BLUETOOTH;
+            address = host.replace("bt://", "tcp://");
+            Log.d(TAG, "Setting Bluetooth");
+        } else {
+            Log.d(TAG, "Setting WiFi");
+        }
+
+//         if (isBluetooth && btNetwork != null) {
+//             connMgr.bindProcessToNetwork(btNetwork);
+//         } else {
+//             connMgr.bindProcessToNetwork(mobileNetwork);
+//         }
+
+        request.addTransportType(transport);
+        connMgr.registerNetworkCallback(request.build(), new ConnectivityManager.NetworkCallback() {
+                    @Override
+                    public void onAvailable(Network network) {
+                        ConnectivityManager.setProcessDefaultNetwork(network);
+                        connectMqtt(options, callback);
+                    }
+                }
+        );
     }
 
     void subscribe(final ReadableArray topicList, final ReadableArray qosList) {
@@ -229,7 +296,7 @@ class MqttClient {
             sendEvent(EVENT_NAME_CONNECT, params);
         }
     }
-    
+
     private class ConnectMqttActionListener implements IMqttActionListener {
         @Override
         public void onSuccess(IMqttToken asyncActionToken) {
