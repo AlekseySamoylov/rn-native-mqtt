@@ -135,40 +135,19 @@ class MqttClient {
         ConnectivityManager connMgr = (ConnectivityManager) reactContext.getApplicationContext().getSystemService(Context.CONNECTIVITY_SERVICE);
         NetworkRequest.Builder request = new NetworkRequest.Builder();
 
-        Network btNetwork = null;
-        Network mobileNetwork = null;
-        for (Network network : connMgr.getAllNetworks()) {
-            NetworkInfo networkInfo = connMgr.getNetworkInfo(network);
-
-            Log.d(TAG, networkInfo.getTypeName());
-            Log.d(TAG, networkInfo.getState().name());
-
-            if (networkInfo.getType() == ConnectivityManager.TYPE_WIFI) {
-                mobileNetwork = network;
-            } else if (networkInfo.getType() == ConnectivityManager.TYPE_BLUETOOTH) {
-                btNetwork = network;
-            }
-        }
-
         boolean isBluetooth = host.startsWith("bt://");
-        int transport = NetworkCapabilities.TRANSPORT_WIFI;
 
         address = host;
         if (isBluetooth) {
-            transport = NetworkCapabilities.TRANSPORT_BLUETOOTH;
+            request.addTransportType(NetworkCapabilities.TRANSPORT_BLUETOOTH);
             address = host.replace("bt://", "tcp://");
             Log.d(TAG, "Setting Bluetooth");
         } else {
-            Log.d(TAG, "Setting WiFi");
+            request.addTransportType(NetworkCapabilities.TRANSPORT_WIFI);
+            request.addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR);
+            Log.d(TAG, "Setting WiFi/Cellular");
         }
 
-//         if (isBluetooth && btNetwork != null) {
-//             connMgr.bindProcessToNetwork(btNetwork);
-//         } else {
-//             connMgr.bindProcessToNetwork(mobileNetwork);
-//         }
-
-        request.addTransportType(transport);
         connMgr.registerNetworkCallback(request.build(), new ConnectivityManager.NetworkCallback() {
                     @Override
                     public void onAvailable(Network network) {
