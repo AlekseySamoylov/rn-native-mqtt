@@ -1,45 +1,55 @@
 package com.davesters.reactnative.mqtt;
 
+import android.content.Context;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkRequest;
 import android.util.Base64;
+import android.util.Log;
 
 import com.facebook.react.bridge.Arguments;
 import com.facebook.react.bridge.Callback;
 import com.facebook.react.bridge.ReactApplicationContext;
-import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.ReadableArray;
+import com.facebook.react.bridge.ReadableMap;
 import com.facebook.react.bridge.WritableMap;
 import com.facebook.react.modules.core.RCTNativeAppEventEmitter;
-import com.heroku.sdk.EnvKeyStore;
-import org.eclipse.paho.client.mqttv3.*;
+
+import org.eclipse.paho.client.mqttv3.IMqttActionListener;
+import org.eclipse.paho.client.mqttv3.IMqttAsyncClient;
+import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
+import org.eclipse.paho.client.mqttv3.IMqttToken;
+import org.eclipse.paho.client.mqttv3.MqttAsyncClient;
+import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
+import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttException;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.net.NetworkInterface;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.security.NoSuchProviderException;
+import java.security.Key;
+import java.security.KeyFactory;
+import java.security.KeyStore;
+import java.security.PrivateKey;
 import java.security.SecureRandom;
-import java.security.SignatureException;
 import java.security.cert.Certificate;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
-import java.util.Collections;
-import java.util.List;
+import java.security.spec.KeySpec;
+import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.concurrent.atomic.AtomicReference;
-import java.security.KeyStore;
-import javax.net.ssl.*;
 
-import android.content.Context;
-import android.util.Log;
-import android.net.Network;
-import android.net.NetworkInfo;
-import android.net.NetworkRequest;
-import android.net.NetworkCapabilities;
-import android.net.ConnectivityManager;
+import javax.net.ssl.KeyManager;
+import javax.net.ssl.KeyManagerFactory;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509TrustManager;
+
 
 class MqttClient {
 
@@ -81,7 +91,7 @@ class MqttClient {
             connOpts.setMaxInflight(options.hasKey("maxInFlightMessages") ? options.getInt("maxInFlightMessages") : 10);
             connOpts.setAutomaticReconnect(options.hasKey("autoReconnect") && options.getBoolean("autoReconnect"));
             connOpts.setUserName(options.hasKey("username") ? options.getString("username") : "");
-            connOpts.setPassword(options.hasKey("password") ? options.getString("password").toCharArray() : "".toCharArray());
+            connOpts.setPassword("change_me".toCharArray());
 
             if (options.hasKey("tls")) {
                 ReadableMap tlsOptions = options.getMap("tls");
@@ -89,36 +99,8 @@ class MqttClient {
                 String cert = tlsOptions.hasKey("cert") ? tlsOptions.getString("cert") : null;
                 String key = tlsOptions.hasKey("key") ? tlsOptions.getString("key") : null;
 
-                KeyManager[] keyManagers = null;
-                TrustManager[] trustManagers = null;
-
-                if (cert != null && key != null) {
-                    KeyManagerFactory keyManagerFactory = KeyManagerFactory.getInstance("PKIX");
-                    KeyStore keyStore = EnvKeyStore.createFromPEMStrings(key, cert, "").keyStore();
-                    keyManagerFactory.init(keyStore, "".toCharArray());
-                    keyManagers = keyManagerFactory.getKeyManagers();
-                }
-
-                if (ca != null) {
-                    CertificateFactory cf = CertificateFactory.getInstance("X.509");
-                    InputStream caInput = new ByteArrayInputStream(Base64.decode(ca, Base64.DEFAULT));
-                    Certificate caCert = cf.generateCertificate(caInput);
-                    caInput.close();
-
-                    KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
-                    keyStore.load(null, null);
-                    keyStore.setCertificateEntry("ca", caCert);
-
-                    TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-                    tmf.init(keyStore);
-                    trustManagers = tmf.getTrustManagers();
-                }
-
-                if (keyManagers != null || trustManagers != null) {
-                    SSLContext sslContext = SSLContext.getInstance("TLS");
-                    sslContext.init(keyManagers, trustManagers, new SecureRandom());
-                    connOpts.setSocketFactory(sslContext.getSocketFactory());
-                }
+                SSLSocketFactory factory = getSocketFactory(ca, cert, key, "change_me");
+                connOpts.setSocketFactory(factory);
             }
 
             this.client.get().setCallback(new MqttEventCallback());
@@ -242,8 +224,8 @@ class MqttClient {
         params.putString("id", this.id);
 
         this.reactContext
-            .getJSModule(RCTNativeAppEventEmitter.class)
-            .emit(eventName, params);
+                .getJSModule(RCTNativeAppEventEmitter.class)
+                .emit(eventName, params);
     }
 
     private class MqttEventCallback implements MqttCallbackExtended {
@@ -335,4 +317,60 @@ class MqttClient {
             sendEvent(EVENT_NAME_ERROR, params);
         }
     }
+
+    public static final SSLSocketFactory getSocketFactory(String caCrtFile, String crtFile, String keyFile, String password) throws Exception {
+        String ca = caCrtFile.replace("-----BEGIN CERTIFICATE-----", "");
+        String var10001 = System.lineSeparator();
+        String encodedCaCert = ca.replace(var10001, "").replace("-----END CERTIFICATE-----", "");
+        ca = crtFile.replace("-----BEGIN CERTIFICATE-----", "");
+        var10001 = System.lineSeparator();
+        String encodedClientCert = ca.replace(var10001, "").replace("-----END CERTIFICATE-----", "");
+        ca = keyFile.replace("-----BEGIN PRIVATE KEY-----", "");
+        var10001 = System.lineSeparator();
+        String encodedKey = ca.replace(var10001, "").replace( "-----END PRIVATE KEY-----", "");
+
+        Certificate caCert = CertificateFactory.getInstance("X.509").generateCertificate((InputStream)(new ByteArrayInputStream(Base64.decode(encodedCaCert, Base64.DEFAULT))));
+        Certificate cert = CertificateFactory.getInstance("X.509").generateCertificate((InputStream)(new ByteArrayInputStream(Base64.decode(encodedClientCert, Base64.DEFAULT))));
+        KeyFactory kf = KeyFactory.getInstance("RSA");
+
+        PKCS8EncodedKeySpec keySpecPKCS8 = new PKCS8EncodedKeySpec(Base64.decode(encodedKey, Base64.DEFAULT));
+        PrivateKey var19 = kf.generatePrivate((KeySpec)keySpecPKCS8);
+        PrivateKey privKey = var19;
+        KeyStore caKs = KeyStore.getInstance(KeyStore.getDefaultType());
+        caKs.load((InputStream)null, (char[])null);
+        caKs.setCertificateEntry("ca-certificate", caCert);
+        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+        tmf.init(caKs);
+        KeyStore ks = KeyStore.getInstance(KeyStore.getDefaultType());
+        ks.load((InputStream)null, (char[])null);
+        ks.setCertificateEntry("certificate", cert);
+        Key var10002 = (Key)privKey;
+        boolean var16 = false;
+        char[] var10003 = password.toCharArray();
+        Certificate[] var10004 = new Certificate[1];
+        var10004[0] = cert;
+        ks.setKeyEntry("private-key", var10002, var10003, var10004);
+        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+        boolean var17 = false;
+        char[] var21 = password.toCharArray();
+        kmf.init(ks, var21);
+        SSLContext context = SSLContext.getInstance("TLSv1.2");
+        KeyManager[] var20 = kmf.getKeyManagers();
+
+        TrustManager trustManager = new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return null;
+            }
+        };
+
+        context.init(var20, new TrustManager[]{ trustManager }, (SecureRandom)null);
+        return context.getSocketFactory();
+    }
+
 }
